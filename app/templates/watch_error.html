@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Cannot open watch order{% endblock %}
+{% block content %}
+<h2>Cannot open watch order</h2>
+<div class="toast error-text">{{ error }}</div>
+<p class="small muted">Only one order may be in progress at a time.</p>
+<p><a href="/">← Back to overview</a></p>
+{% endblock %}

@@ -48,6 +48,11 @@
   button:hover { border-color: var(--accent); }
   button.primary { background: #24406e; border-color: #3b5f9e; }
   form.inline { display: inline; }
+  input[type=text] { background: var(--bg); color: var(--fg); border: 1px solid var(--line);
+           border-radius: 8px; padding: 7px 12px; font: inherit; min-width: 380px; }
+  .button-link { display:inline-block; background: var(--panel-2); border:1px solid var(--line);
+           border-radius: 8px; padding: 7px 14px; }
+  .watch-form label { display:block; }
   pre { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
         padding: 10px 12px; overflow: auto; max-height: 340px; margin: 0; font-size: 12px; }
   details summary { cursor: pointer; color: var(--accent); }
@@ -65,6 +70,7 @@
 <body>
 <header>
   <h1>OTLP TAIL SAMPLER</h1>
+  <a href="/" class="small">Overview</a>
   <span class="badge {% if status.paused %}warn{% else %}ok{% endif %}">
     archiving {{ 'PAUSED' if status.paused else 'ACTIVE' }}
   </span>

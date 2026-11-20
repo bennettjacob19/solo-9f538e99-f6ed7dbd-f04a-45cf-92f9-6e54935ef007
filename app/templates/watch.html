@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% block title %}{{ order.orderId }} · Watch Order{% endblock %}
+{% block content %}
+<div class="toolbar">
+  <a href="/">← Back to overview</a>
+  <span class="spacer"></span>
+  {% set badge_class = {
+    "WAITING": "warn",
+    "COLLECTING": "ok",
+    "AWAITING_WRITE": "warn",
+    "SUCCESS": "ok",
+    "DROPPED": "err",
+    "TIMEOUT": "err",
+    "INTERRUPTED": "err"
+  } %}
+  <span class="badge {{ badge_class.get(order.state, '') }}">{{ order.state }}</span>
+</div>
+
+<h2>Watch order {{ order.orderId }}</h2>
+<div class="grid">
+  <div class="card">
+    <div class="label">Trace ID under observation</div>
+    <div class="mono small">{{ order.traceId }}</div>
+    <div class="small muted">only the first window opened after the order was created is tracked</div>
+  </div>
+  <div class="card">
+    <div class="label">State</div>
+    <div class="value" style="font-size:18px">{{ order.state }}</div>
+    <div class="small muted">
+      {% if order.state == "WAITING" %}waiting for the trace id to enter a window{% endif %}
+      {% if order.state == "COLLECTING" %}collecting — no ERROR span discarded yet, nothing written{% endif %}
+      {% if order.state == "AWAITING_WRITE" %}window closed with an ERROR span, waiting for the archive write{% endif %}
+      {% if order.state == "SUCCESS" %}archived successfully; this conclusion is fixed{% endif %}
+      {% if order.state == "DROPPED" %}window closed without an ERROR span, trace was not archived{% endif %}
+      {% if order.state == "TIMEOUT" %}no window opened within {{ order.timeoutSeconds }}s, order timed out{% endif %}
+      {% if order.state == "INTERRUPTED" %}process restarted before the order could finish{% endif %}
+    </div>
+  </div>
+  <div class="card">
+    <div class="label">Spans refused while waiting (slots full)</div>
+    <div class="value mono">{{ order.capacityRejected }}</div>
+    <div class="small muted">counted only before the order entered a window</div>
+  </div>
+  <div class="card">
+    <div class="label">Distinct spans in this window</div>
+    <div class="value mono">{{ order.spanCount }}</div>
+    <div class="small muted">de-duplicated by spanId, capped per trace</div>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="card"><div class="label">Opened</div>
+    <div class="small mono">{{ order.createdAtNs|utc_time }}</div></div>
+  <div class="card"><div class="label">Window opened</div>
+    <div class="small mono">{{ order.windowOpenedAtNs|utc_time if order.windowOpenedAtNs else '—' }}</div></div>
+  <div class="card"><div class="label">Closed</div>
+    <div class="small mono">{{ order.closedAtNs|utc_time if order.closedAtNs else '—' }}</div></div>
+  <div class="card"><div class="label">Wait timeout</div>
+    <div class="small mono">{{ order.timeoutSeconds }} s</div></div>
+</div>
+
+{% if order.state == "AWAITING_WRITE" %}
+<div class="toast">
+  Archive pending — the conclusion is not SUCCESS until the trace is committed.
+  {% if order.writeAttempts %}
+  <span class="error-text">{{ order.writeAttempts }} failed attempt(s){% if order.lastWriteError %}: {{ order.lastWriteError }}{% endif %}</span>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if order.state == "SUCCESS" and archived_trace %}
+<p>
+  <a class="button-link" href="/traces/{{ archived_trace.trace_id }}">View archived trace ({{ archived_trace.span_count }} spans) →</a>
+</p>
+<p class="small muted">
+  The order's success was committed together with this exact archive. A later
+  re-archive of the same trace id cannot change this order's conclusion.
+</p>
+{% elif order.archivedTraceId %}
+<p class="small muted">Archived trace id: <span class="mono">{{ order.archivedTraceId }}</span></p>
+{% endif %}
+
+{% if not order.state in ["SUCCESS", "DROPPED", "TIMEOUT", "INTERRUPTED"] %}
+<p class="small muted">This page reflects live progress; refresh to update.</p>
+{% endif %}
+{% endblock %}

@@ -24,6 +24,12 @@ from .sampler import (
     TraceSampler,
 )
 from .storage import ArchiveStore
+from .watch import (
+    DEFAULT_WATCH_TIMEOUT_SECONDS,
+    WatchConflict,
+    WatchError,
+    WatchManager,
+)
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -102,11 +108,21 @@ def create_app(
     window_seconds: Optional[float] = None,
     capacity: Optional[int] = None,
     max_spans_per_trace: Optional[int] = None,
+    watch_timeout_seconds: Optional[float] = None,
     start_sampler_thread: bool = True,
     clock: Optional[Callable[[], float]] = None,
 ) -> FastAPI:
     db_path = db_path or os.environ.get("DB_PATH", DEFAULT_DB_PATH)
     store = ArchiveStore(db_path)
+    timeout = (
+        watch_timeout_seconds
+        if watch_timeout_seconds is not None
+        else _env_float("WATCH_TIMEOUT_SECONDS", DEFAULT_WATCH_TIMEOUT_SECONDS)
+    )
+    watch = WatchManager(store, timeout_seconds=timeout, clock=clock)
+    # An unclean restart can no longer observe in-memory windows: every order
+    # that had not finished is closed as INTERRUPTED.
+    watch.recover_interrupted()
     sampler = TraceSampler(
         store,
         window_seconds=window_seconds
@@ -119,6 +135,7 @@ def create_app(
         if max_spans_per_trace is not None
         else _env_int("MAX_SPANS_PER_TRACE", DEFAULT_MAX_SPANS),
         clock=clock,
+        watch=watch,
     )
     templates = Jinja2Templates(directory=TEMPLATE_DIR)
     templates.env.filters["pretty_json"] = _pretty_json
@@ -145,6 +162,7 @@ def create_app(
     app = FastAPI(title="OTLP Tail Sampler", lifespan=lifespan)
     app.state.store = store
     app.state.sampler = sampler
+    app.state.watch = watch
 
     def render(request: Request, name: str, context: dict, status_code: int = 200):
         return templates.TemplateResponse(
@@ -152,7 +170,11 @@ def create_app(
         )
 
     def page_context(request: Request, **extra) -> dict:
-        context = {"status": sampler.snapshot(), "request": request}
+        context = {
+            "status": sampler.snapshot(),
+            "watch_status": watch.snapshot(),
+            "request": request,
+        }
         context.update(extra)
         return context
 
@@ -162,10 +184,21 @@ def create_app(
 
     def overview(request: Request) -> HTMLResponse:
         traces, total = store.list_traces(limit=50, offset=0)
+        orders, order_total = store.list_watch_orders(limit=20, offset=0)
+        active = watch.active_order()
         return render(
             request,
             "index.html",
-            page_context(request, traces=traces, total=total, limit=50, offset=0),
+            page_context(
+                request,
+                traces=traces,
+                total=total,
+                limit=50,
+                offset=0,
+                orders=orders,
+                order_total=order_total,
+                active_order=active,
+            ),
         )
 
     # -- OTLP ingest --------------------------------------------------------
@@ -215,8 +248,10 @@ def create_app(
     async def index(
         request: Request, limit: int = Query(50, ge=1, le=200), offset: int = 0
     ):
+        flush_due_writes()
         offset = max(0, offset)
         traces, total = store.list_traces(limit=limit, offset=offset)
+        orders, order_total = store.list_watch_orders(limit=20, offset=0)
         return render(
             request,
             "index.html",
@@ -226,6 +261,9 @@ def create_app(
                 total=total,
                 limit=limit,
                 offset=offset,
+                orders=orders,
+                order_total=order_total,
+                active_order=watch.active_order(),
             ),
         )
 
@@ -240,6 +278,53 @@ def create_app(
                 status_code=404,
             )
         return render(request, "trace.html", page_context(request, trace=trace))
+
+    @app.get("/watch/{order_id}", response_class=HTMLResponse)
+    async def watch_detail_page(request: Request, order_id: str):
+        flush_due_writes()
+        order = watch.get(order_id)
+        if order is None:
+            return render(
+                request,
+                "watch_missing.html",
+                page_context(request, order_id=order_id),
+                status_code=404,
+            )
+        trace = (
+            store.get_trace(order["archivedTraceId"])
+            if order.get("archivedTraceId")
+            else None
+        )
+        return render(
+            request,
+            "watch.html",
+            page_context(request, order=order, archived_trace=trace),
+        )
+
+    @app.post("/watch", response_class=HTMLResponse)
+    async def create_watch_page(request: Request):
+        form = await request.form()
+        trace_id = str(form.get("traceId") or "")
+        try:
+            order = watch.create_watch(trace_id)
+        except WatchConflict as exc:
+            return render(
+                request,
+                "watch_error.html",
+                page_context(request, error=str(exc), error_code=409),
+                status_code=409,
+            )
+        except WatchError as exc:
+            return render(
+                request,
+                "watch_error.html",
+                page_context(request, error=str(exc), error_code=400),
+                status_code=400,
+            )
+        return Response(
+            status_code=303,
+            headers={"location": f"/watch/{order.order_id}"},
+        )
 
     @app.post("/pause", response_class=HTMLResponse)
     async def page_pause(request: Request):
@@ -257,6 +342,7 @@ def create_app(
     async def api_status() -> dict:
         snapshot = sampler.snapshot()
         snapshot["archivedTraces"] = store.count()
+        snapshot["watch"] = watch.snapshot()
         return snapshot
 
     @app.get("/api/traces")
@@ -270,6 +356,39 @@ def create_app(
         if trace is None:
             return JSONResponse(status_code=404, content={"error": "not archived"})
         return trace
+
+    @app.post("/api/watch")
+    async def api_create_watch(request: Request):
+        try:
+            payload = await request.json()
+        except Exception:
+            return JSONResponse(status_code=400, content={"error": "invalid JSON"})
+        trace_id = str((payload or {}).get("traceId") or "")
+        try:
+            order = watch.create_watch(trace_id)
+        except WatchConflict as exc:
+            return JSONResponse(status_code=409, content={"error": str(exc)})
+        except WatchError as exc:
+            return JSONResponse(status_code=400, content={"error": str(exc)})
+        return JSONResponse(status_code=201, content=order.snapshot())
+
+    @app.get("/api/watch")
+    async def api_list_watch(limit: int = Query(50, ge=1, le=200), offset: int = 0):
+        orders, total = watch.list(limit=limit, offset=max(0, offset))
+        return {"total": total, "orders": orders}
+    @app.get("/api/watch/active")
+    async def api_active_watch():
+        order = watch.active_order()
+        if order is None:
+            return JSONResponse(status_code=404, content={"error": "no active order"})
+        return order
+
+    @app.get("/api/watch/{order_id}")
+    async def api_get_watch(order_id: str):
+        order = watch.get(order_id)
+        if order is None:
+            return JSONResponse(status_code=404, content={"error": "order not found"})
+        return order
 
     @app.post("/api/archive/pause")
     async def api_pause() -> dict:

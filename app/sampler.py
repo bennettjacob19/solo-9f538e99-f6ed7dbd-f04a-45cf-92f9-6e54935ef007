@@ -31,6 +31,7 @@ from typing import Callable, Optional
 
 from .models import ActiveTrace, IngestResult, PendingArchive, SpanRecord
 from .storage import ArchiveStore
+from .watch import WatchManager
 
 log = logging.getLogger("tailsampler.sampler")
 
@@ -52,6 +53,7 @@ class TraceSampler:
         max_spans_per_trace: int = DEFAULT_MAX_SPANS,
         tick_seconds: float = 0.05,
         clock: Optional[Callable[[], float]] = None,
+        watch: Optional[WatchManager] = None,
     ) -> None:
         if capacity <= 0 or max_spans_per_trace <= 0 or window_seconds <= 0:
             raise ValueError("sampler limits must be positive")
@@ -62,6 +64,9 @@ class TraceSampler:
         self.tick_seconds = max(0.005, float(tick_seconds))
         # Wall-clock-independent source of time.  Tests inject a fake clock.
         self.clock: Callable[[], float] = clock or time.monotonic
+        # Optional observation-order manager.  It only observes; ingest rules
+        # are applied first and never change because a watch exists.
+        self.watch = watch
 
         self._lock = threading.RLock()
         self._wake = threading.Event()
@@ -185,6 +190,8 @@ class TraceSampler:
                 active.has_error = active.has_error or span.is_error
                 result.accepted += 1
                 result.accepted_new += 1
+                if self.watch is not None:
+                    self.watch.on_span_accepted(trace_id, len(active.spans))
                 return
 
         if active is None and (trace_id in self._closed or trace_id in self._pending):
@@ -195,6 +202,8 @@ class TraceSampler:
         if self._occupied_locked() >= self.capacity:
             result.reject("capacity")
             self.totals["traces_capacity_rejected"] += 1
+            if self.watch is not None:
+                self.watch.on_capacity_reject(trace_id)
             return
 
         span = replace(span, seq=0)
@@ -211,6 +220,10 @@ class TraceSampler:
         self.totals["traces_admitted"] += 1
         result.accepted += 1
         result.accepted_new += 1
+        if self.watch is not None:
+            # Only a newly opened window can bind an order.
+            self.watch.on_trace_admitted(trace_id)
+            self.watch.on_span_accepted(trace_id, 1)
 
     def _occupied_locked(self) -> int:
         return len(self._active) + len(self._pending)
@@ -241,6 +254,10 @@ class TraceSampler:
             self._mark_closed_locked(trace_id, now)
             if not trace.has_error:
                 self.totals["traces_discarded"] += 1
+                if self.watch is not None:
+                    # No ERROR span inside the watched window: order closes as
+                    # DROPPED and survives even if archiving is paused.
+                    self.watch.on_trace_discarded(trace_id)
                 continue
             # Keep the expired snapshot and, with it, the slot.  The slot is
             # freed only when ArchiveStore.write_trace commits.
@@ -250,6 +267,10 @@ class TraceSampler:
             )
             self._next_attempt[trace_id] = now
             self._retry_delay[trace_id] = 0.0
+            if self.watch is not None:
+                # ERROR present: wait for the archive; span count is frozen at
+                # whatever the window held when it closed.
+                self.watch.on_trace_pending(trace_id)
         self._prune_closed_locked(now)
 
     # ---------------------------------------------------------------- worker
@@ -291,9 +312,25 @@ class TraceSampler:
                     with self._lock:
                         self._writing.discard(item.trace_id)
 
+        if self.watch is not None:
+            with self._lock:
+                span_counts = {
+                    trace_id: len(trace.spans)
+                    for trace_id, trace in self._active.items()
+                }
+            self.watch.tick(span_counts)
+
     def _write_pending(self, item: PendingArchive) -> None:
+        order = self.watch.order_for_pending(item.trace_id) if self.watch else None
         try:
-            self.store.write_trace(item.trace_id, item.spans)
+            if order is not None:
+                # The archive and the order's SUCCESS conclusion commit in one
+                # transaction, so they can never diverge.
+                self.store.write_trace_and_finish_watch(
+                    item.trace_id, item.spans, order.order_id, order.span_count
+                )
+            else:
+                self.store.write_trace(item.trace_id, item.spans)
         except Exception as exc:
             with self._lock:
                 item.attempts += 1
@@ -303,6 +340,9 @@ class TraceSampler:
                 delay = min(30.0, max(0.5, self._retry_delay.get(item.trace_id, 0.0) * 2))
                 self._retry_delay[item.trace_id] = delay
                 self._next_attempt[item.trace_id] = self.clock() + delay
+            if self.watch is not None:
+                # A failed archive leaves the order AWAITING_WRITE ("待写").
+                self.watch.on_write_failed(item.trace_id, item.last_error)
             log.warning("archive write failed for %s: %s", item.trace_id, exc)
             return
 
@@ -314,6 +354,8 @@ class TraceSampler:
             self._retry_delay.pop(item.trace_id, None)
             self._mark_closed_locked(item.trace_id, self.clock())
             self.totals["traces_archived"] += 1
+        if order is not None:
+            self.watch.on_archive_committed(item.trace_id)
         log.info("archived trace %s (%d spans)", item.trace_id, len(item.spans))
 
     # ----------------------------------------------------------------- stats

@@ -14,6 +14,62 @@
 <div class="toast error-text">Last write error: {{ status.lastError }}</div>
 {% endif %}
 
+<h2>Watch orders</h2>
+<div class="card" style="margin-bottom:14px">
+  <form method="post" action="/watch" class="watch-form">
+    <label class="label" for="traceId">Open an observation order for a reproduced trace</label>
+    <div class="toolbar" style="margin:8px 0 0">
+      <input id="traceId" name="traceId" type="text" required
+             pattern="[0-9a-fA-F]{32}" maxlength="32"
+             placeholder="32 hex chars, e.g. 0123456789abcdef0123456789abcdef"
+             class="mono">
+      <button class="primary" type="submit">Open watch order</button>
+    </div>
+    <div class="small muted" style="margin-top:8px">
+      At most one order in progress. It tracks only the first window opened for
+      this id after now; a 30&nbsp;s wait without a window closes it as TIMEOUT.
+    </div>
+  </form>
+</div>
+
+{% if active_order %}
+<div class="toast" style="margin-bottom:14px">
+  <strong>Order in progress:</strong>
+  <a href="/watch/{{ active_order.orderId }}">{{ active_order.orderId }}</a>
+  <span class="badge {% if active_order.state == 'COLLECTING' %}ok{% else %}warn{% endif %}">{{ active_order.state }}</span>
+  <span class="mono small">{{ active_order.traceId }}</span>
+  {% if active_order.state == "WAITING" %}
+    · {{ active_order.capacityRejected }} span(s) refused (slots full)
+  {% else %}
+    · {{ active_order.spanCount }} distinct span(s) in window
+  {% endif %}
+</div>
+{% endif %}
+
+{% if orders %}
+<table>
+  <thead><tr><th>Order</th><th>Trace ID</th><th>State</th><th>Refused (full)</th><th>Window spans</th><th>Opened</th><th>Closed</th></tr></thead>
+  <tbody>
+  {% for o in orders %}
+    <tr>
+      <td class="mono"><a href="/watch/{{ o.order_id }}">{{ o.order_id }}</a></td>
+      <td class="mono small">{{ o.trace_id[:16] }}…{{ o.trace_id[-4:] }}</td>
+      <td><span class="badge {% if o.state in ['SUCCESS', 'COLLECTING'] %}ok{% elif o.state in ['DROPPED', 'TIMEOUT', 'INTERRUPTED'] %}err{% else %}warn{% endif %}">{{ o.state }}</span></td>
+      <td class="mono">{{ o.capacity_rejected }}</td>
+      <td class="mono">{{ o.span_count }}</td>
+      <td class="mono small">{{ o.created_at_ns|utc_time }}</td>
+      <td class="mono small">{{ o.closed_at_ns|utc_time if o.closed_at_ns else '—' }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% if order_total > orders|length %}
+<div class="toolbar small muted">Showing {{ orders|length }} of {{ order_total }} orders.</div>
+{% endif %}
+{% else %}
+<div class="muted">No watch orders yet.</div>
+{% endif %}
+
 <h2>Collection state</h2>
 <div class="grid">
   <div class="card"><div class="label">Collecting</div><div class="value">{{ status.activeTraces|length }}</div>
