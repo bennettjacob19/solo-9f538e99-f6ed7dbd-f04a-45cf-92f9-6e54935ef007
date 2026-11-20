@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="grid">
+  <div class="card"><div class="label">Archived traces</div><div class="value">{{ total }}</div></div>
+  <div class="card"><div class="label">Slots in use</div><div class="value">{{ status.slotsUsed }} / {{ status.capacity }}</div>
+    <div class="small muted">{{ status.activeTraces|length }} collecting · {{ status.pendingTraces|length }} awaiting write</div></div>
+  <div class="card"><div class="label">Spans accepted</div><div class="value">{{ status.totals.spans_accepted }}</div>
+    <div class="small muted">{{ status.totals.spans_rejected }} rejected</div></div>
+  <div class="card"><div class="label">Windows</div><div class="value">{{ '%.1f'|format(status.windowSeconds) }} s</div>
+    <div class="small muted">max {{ status.maxSpansPerTrace }} spans / trace</div></div>
+</div>
+
+{% if status.lastError %}
+<div class="toast error-text">Last write error: {{ status.lastError }}</div>
+{% endif %}
+
+<h2>Collection state</h2>
+<div class="grid">
+  <div class="card"><div class="label">Collecting</div><div class="value">{{ status.activeTraces|length }}</div>
+    <div class="small muted">windows open ({{ '%.1f'|format(status.windowSeconds) }} s each)</div></div>
+  <div class="card"><div class="label">Awaiting archive</div><div class="value">{{ status.pendingTraces|length }}</div>
+    <div class="small muted">complete, not yet committed</div></div>
+  <div class="card"><div class="label">Discarded</div><div class="value">{{ status.totals.traces_discarded }}</div>
+    <div class="small muted">no ERROR span inside window</div></div>
+  <div class="card"><div class="label">Write failures</div><div class="value">{{ status.totals.traces_write_failed }}</div>
+    <div class="small muted">retried automatically</div></div>
+</div>
+{% if status.pendingTraces %}
+<p class="small muted">Complete traces waiting to be written are not listed until their commit succeeds. Their slots stay reserved until then{% if status.paused %} — archiving is paused, resume to flush them{% endif %}.</p>
+{% endif %}
+
+<h2>Archived traces</h2>
+{% if traces %}
+<table>
+  <thead><tr><th>Trace ID</th><th>Root operation</th><th>Services</th><th>Spans</th><th>Duration</th><th>Archived</th></tr></thead>
+  <tbody>
+  {% for t in traces %}
+    <tr>
+      <td class="mono"><a href="/traces/{{ t.trace_id }}">{{ t.trace_id[:16] }}…{{ t.trace_id[-4:] }}</a></td>
+      <td>{{ t.root_name or '—' }}
+        {% if t.error_count %}<span class="badge err">{{ t.error_count }} ERROR</span>{% endif %}</td>
+      <td>{% for s in t.service_names %}<span class="tag">{{ s }}</span>{% endfor %}</td>
+      <td class="mono">{{ t.span_count }}</td>
+      <td class="mono">{{ t.duration_ns|duration }}</td>
+      <td class="mono small">{{ t.archived_at_ns|utc_time }}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+<div class="toolbar small muted">
+  Showing {{ traces|length }} of {{ total }}.
+  {% if offset + limit < total %}<a href="/?limit={{ limit }}&offset={{ offset + limit }}">Older →</a>{% endif %}
+  {% if offset > 0 %}<a href="/?limit={{ limit }}&offset={{ [offset - limit, 0]|max }}">← Newer</a>{% endif %}
+</div>
+{% else %}
+<div class="muted">Nothing archived yet. Only traces that contain an ERROR span are kept.</div>
+{% endif %}
+{% endblock %}

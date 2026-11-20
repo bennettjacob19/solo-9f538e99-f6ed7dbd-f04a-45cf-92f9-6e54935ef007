@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}{{ trace.trace_id }} · Tail Sampler{% endblock %}
+{% block content %}
+<div class="toolbar">
+  <a href="/">← All traces</a>
+  <span class="spacer"></span>
+  <span class="badge {% if trace.error_count %}err{% else %}ok{% endif %}">{{ trace.error_count }} ERROR / {{ trace.span_count }} spans</span>
+</div>
+
+<div class="grid">
+  <div class="card"><div class="label">Trace ID</div><div class="mono small">{{ trace.trace_id }}</div></div>
+  <div class="card"><div class="label">Root operation</div><div class="value" style="font-size:15px">{{ trace.root_name or '—' }}</div>
+    <div class="small muted">{{ trace.service_names|join(', ') or 'unknown service' }}</div></div>
+  <div class="card"><div class="label">Total duration</div><div class="value">{{ trace.duration_ns|duration }}</div></div>
+  <div class="card"><div class="label">Archived</div><div class="small mono">{{ trace.archived_at_ns|utc_time }}</div>
+    <div class="small muted">first span {{ trace.min_start_ns|utc_time }}</div></div>
+</div>
+
+<h2>Spans ({{ trace.spans|length }})</h2>
+{% for span in trace.spans %}
+<details {% if loop.first or span.is_error %}open{% endif %} style="margin-bottom:10px">
+  <summary>
+    <strong>{{ span.name or '(unnamed)' }}</strong>
+    <span class="muted small">· {{ span.kind }} · {{ span.service_name or 'unknown' }}</span>
+    <span class="mono small">· {{ span.duration_ns|duration }}</span>
+    {% if span.is_error %}<span class="badge err">ERROR</span>{% elif span.status_code != 'UNSET' %}<span class="badge">{{ span.status_code }}</span>{% endif %}
+  </summary>
+  <div class="cols" style="margin-top:10px">
+    <div>
+      <table>
+        <tbody>
+          <tr><th>Span ID</th><td class="mono small">{{ span.span_id }}</td></tr>
+          <tr><th>Parent</th><td class="mono small">{{ span.parent_span_id or '— (root)' }}</td></tr>
+          <tr><th>Status</th><td>{{ span.status_code }}{% if span.status_message %} — <span class="small">{{ span.status_message }}</span>{% endif %}</td></tr>
+          <tr><th>Start</th><td class="mono small">{{ span.start_time_ns|utc_time('%H:%M:%S.%f') }}</td></tr>
+          <tr><th>End</th><td class="mono small">{{ span.end_time_ns|utc_time('%H:%M:%S.%f') }}</td></tr>
+          <tr><th>Events / Links</th><td class="mono">{{ span.event_count }} / {{ span.link_count }}</td></tr>
+        </tbody>
+      </table>
+      <h2 style="font-size:13px">Resource</h2>
+      <pre>{{ span.resource|pretty_json }}</pre>
+    </div>
+    <div>
+      <h2 style="font-size:13px">Attributes</h2>
+      <pre>{{ span.attributes|pretty_json }}</pre>
+      <h2 style="font-size:13px">Scope</h2>
+      <pre>{{ span.scope|pretty_json }}</pre>
+    </div>
+  </div>
+  <h2 style="font-size:13px">Raw OTLP span</h2>
+  <pre>{{ span.raw|pretty_json }}</pre>
+</details>
+{% endfor %}
+{% endblock %}

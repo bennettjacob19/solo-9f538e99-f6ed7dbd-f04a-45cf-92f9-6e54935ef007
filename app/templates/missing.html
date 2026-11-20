@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Trace not archived{% endblock %}
+{% block content %}
+<h2>Trace {{ trace_id }} is not archived</h2>
+<p class="muted">
+  Traces are archived only when they contain an ERROR span and their two second
+  collection window has closed and the write to SQLite has committed. Check that
+  the id is complete (32 hex characters) and that the trace was rejected rather
+  than still collecting.
+</p>
+{% if status.activeTraces or status.pendingTraces %}
+<h2>In flight</h2>
+<ul class="small mono">
+  {% for t in status.activeTraces %}<li>collecting {{ t.traceId }} ({{ t.spanCount }} spans, {{ t.remainingMs }} ms left)</li>{% endfor %}
+  {% for t in status.pendingTraces %}<li>pending {{ t.traceId }} ({{ t.spanCount }} spans)</li>{% endfor %}
+</ul>
+{% endif %}
+<p><a href="/">← Back to overview</a></p>
+{% endblock %}

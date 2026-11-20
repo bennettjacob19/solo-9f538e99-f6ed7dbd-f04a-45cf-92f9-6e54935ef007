@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}OTLP Tail Sampler{% endblock %}</title>
+<style>
+  :root {
+    --bg: #0f1117; --panel: #171a23; --panel-2: #1d2130; --line: #2a3042;
+    --fg: #e6e9f2; --muted: #8b93a7; --accent: #6ea8fe; --error: #ff6b6b;
+    --ok: #4ade80; --warn: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  header { padding: 18px 28px; border-bottom: 1px solid var(--line);
+           display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; letter-spacing: .04em; }
+  header .spacer { flex: 1; }
+  main { padding: 22px 28px 60px; max-width: 1400px; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px;
+           font-size: 12px; border: 1px solid var(--line); color: var(--muted); }
+  .badge.err { color: var(--error); border-color: #5b2626; background: #2a1717; }
+  .badge.ok { color: var(--ok); border-color: #244a32; background: #14251b; }
+  .badge.warn { color: var(--warn); border-color: #574413; background: #2a2110; }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit,minmax(200px,1fr));
+          margin-bottom: 22px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+          padding: 14px 16px; }
+  .card .label { color: var(--muted); font-size: 12px; text-transform: uppercase;
+                 letter-spacing: .08em; }
+  .card .value { font-size: 22px; margin-top: 4px; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel);
+          border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line);
+           vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase;
+       letter-spacing: .06em; background: var(--panel-2); }
+  tr:last-child td { border-bottom: 0; }
+  tr:hover td { background: #1a1e2a; }
+  .mono { font-variant-numeric: tabular-nums; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  button { background: var(--panel-2); color: var(--fg); border: 1px solid var(--line);
+           border-radius: 8px; padding: 7px 14px; cursor: pointer; font: inherit; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: #24406e; border-color: #3b5f9e; }
+  form.inline { display: inline; }
+  pre { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+        padding: 10px 12px; overflow: auto; max-height: 340px; margin: 0; font-size: 12px; }
+  details summary { cursor: pointer; color: var(--accent); }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 18px 0 10px; }
+  .toast { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line);
+           background: var(--panel-2); color: var(--muted); }
+  .error-text { color: var(--error); }
+  h2 { font-size: 15px; margin: 26px 0 10px; }
+  .tag { display:inline-block; background: var(--panel-2); border:1px solid var(--line);
+         border-radius: 6px; padding: 0 6px; margin: 1px 2px; font-size: 12px; }
+  @media (max-width: 800px) { .cols { grid-template-columns: 1fr; } main { padding: 16px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>OTLP TAIL SAMPLER</h1>
+  <span class="badge {% if status.paused %}warn{% else %}ok{% endif %}">
+    archiving {{ 'PAUSED' if status.paused else 'ACTIVE' }}
+  </span>
+  <span class="badge">slots {{ status.slotsUsed }}/{{ status.capacity }}</span>
+  <span class="spacer"></span>
+  {% if status.paused %}
+    <form class="inline" method="post" action="/resume"><button class="primary">Resume archiving</button></form>
+  {% else %}
+    <form class="inline" method="post" action="/pause"><button>Pause archiving</button></form>
+  {% endif %}
+</header>
+<main>{% block content %}{% endblock %}</main>
+</body>
+</html>

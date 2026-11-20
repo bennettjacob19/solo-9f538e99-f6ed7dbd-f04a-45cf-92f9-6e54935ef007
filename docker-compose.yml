@@ -1,0 +1,19 @@
+services:
+  tail-sampler:
+    build: .
+    image: otlp-tail-sampler:latest
+    container_name: otlp-tail-sampler
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      SAMPLE_WINDOW_SECONDS: "${SAMPLE_WINDOW_SECONDS:-2}"
+      MAX_ACTIVE_TRACES: "${MAX_ACTIVE_TRACES:-16}"
+      MAX_SPANS_PER_TRACE: "${MAX_SPANS_PER_TRACE:-64}"
+      DB_PATH: /data/traces.db
+      LOG_LEVEL: "${LOG_LEVEL:-INFO}"
+    volumes:
+      - sampler-data:/data
+    restart: unless-stopped
+
+volumes:
+  sampler-data:
